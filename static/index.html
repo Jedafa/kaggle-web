@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kaggle Web Panel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+<div class="orb orb-a"></div>
+<div class="orb orb-b"></div>
+
+<!-- ============ LOGIN ============ -->
+<div id="login" class="overlay">
+  <div class="card login-card">
+    <div class="login-logo">⚡</div>
+    <h1 data-i18n="title">Kaggle Web Panel</h1>
+    <p class="muted" data-i18n="subtitle">remote control for your Kaggle machine</p>
+    <div class="field">
+      <label data-i18n="password">Password</label>
+      <input id="login-pass" type="password" autocomplete="current-password">
+    </div>
+    <button id="login-btn" class="btn btn-accent btn-block" data-i18n="login">Sign in</button>
+    <p id="login-err" class="err hidden" data-i18n="wrong_pass">Wrong password</p>
+    <p class="muted small" data-i18n="login_hint">The password is printed in the Kaggle notebook output.</p>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-logo">⚡</span><span data-i18n="title">Kaggle Web Panel</span></div>
+    <div class="top-actions">
+      <div class="conn-chip" id="conn-chip"><span class="dot" id="conn-dot"></span><span id="conn-label" data-i18n="connected">connected</span></div>
+      <div class="lang-switch">
+        <button data-lang="en">EN</button>
+        <button data-lang="ru">RU</button>
+        <button data-lang="zh">中文</button>
+      </div>
+      <button id="theme-toggle" class="icon-btn" title="Theme">🌙</button>
+      <button id="logout" class="icon-btn" title="Log out">⎋</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ===== LEFT MENU ===== -->
+    <aside class="sidebar">
+      <div class="side-section" style="--i:0">
+        <h3 data-i18n="section_setup">Setup</h3>
+        <button class="btn btn-accent btn-block" id="btn-ollama">
+          <span class="dot" id="dot-ollama"></span><span data-i18n="btn_ollama">Install Ollama + zstd</span>
+        </button>
+        <div class="row">
+          <button class="btn btn-ghost" id="btn-serve"><span data-i18n="btn_ollama_serve">Start Ollama server</span></button>
+          <button class="btn btn-ghost btn-danger-ghost" id="btn-serve-stop"><span data-i18n="btn_ollama_stop">Stop</span></button>
+        </div>
+      </div>
+
+      <div class="side-section" style="--i:1">
+        <h3 data-i18n="section_tunnel">Cloudflare tunnel</h3>
+        <div id="tunnel-chip" class="tunnel-chip hidden">
+          <a id="tunnel-url" target="_blank" rel="noopener"></a>
+          <button id="tunnel-copy" class="icon-btn small">⧉</button>
+        </div>
+        <button class="btn btn-ghost btn-block" id="btn-config">
+          <span data-i18n="btn_configure">Configure (.env)</span>
+        </button>
+        <div class="row">
+          <button class="btn btn-accent" id="btn-tunnel-start">
+            <span class="dot" id="dot-tunnel"></span><span data-i18n="btn_tunnel_start">Start tunnel</span>
+          </button>
+          <button class="btn btn-ghost btn-danger-ghost" id="btn-tunnel-stop"><span data-i18n="btn_tunnel_stop">Stop</span></button>
+        </div>
+      </div>
+
+      <div class="side-section" style="--i:2">
+        <h3 data-i18n="section_models">Models</h3>
+        <div class="field">
+          <input id="model-input" type="text" data-i18n-ph="model_ph" placeholder="e.g. llama3.2:3b" spellcheck="false">
+        </div>
+        <div class="chips" id="model-presets"></div>
+        <button class="btn btn-accent btn-block" id="btn-pull"><span data-i18n="btn_pull">Install model</span></button>
+        <button class="btn btn-ghost btn-block" id="btn-list"><span data-i18n="btn_list">List models</span></button>
+        <div id="models-box" class="models-box hidden"></div>
+      </div>
+
+      <div class="side-section" style="--i:3">
+        <h3 data-i18n="section_extras">Extras</h3>
+        <button class="btn btn-ghost btn-block" id="btn-archive"><span data-i18n="btn_archive">Archive models (zstd)</span></button>
+        <button class="btn btn-ghost btn-block" id="btn-update"><span data-i18n="btn_update">Update panel (git pull)</span></button>
+        <div class="chips">
+          <button class="chip" data-cmd="nvidia-smi">nvidia-smi</button>
+          <button class="chip" data-cmd="df -h">df -h</button>
+          <button class="chip" data-cmd="free -h">free -h</button>
+          <button class="chip" data-cmd="clear">clear</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== TERMINAL ===== -->
+    <section class="term-wrap">
+      <div class="term-bar">
+        <span class="term-title">⌨ terminal</span>
+        <span class="muted small" data-i18n="term_hint">menu actions are typed here</span>
+      </div>
+      <div id="terminal"></div>
+    </section>
+
+    <!-- ===== STATS ===== -->
+    <aside class="stats-panel">
+      <h3 data-i18n="stats_title">Server stats</h3>
+      <div class="stat">
+        <div class="stat-head"><span data-i18n="cpu">CPU</span><b id="s-cpu-v">–</b></div>
+        <div class="bar"><i id="s-cpu"></i></div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span data-i18n="ram">Memory</span><b id="s-ram-v">–</b></div>
+        <div class="bar"><i id="s-ram"></i></div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span data-i18n="disk">Disk</span><b id="s-disk-v">–</b></div>
+        <div class="bar"><i id="s-disk"></i></div>
+      </div>
+      <div class="stat" id="gpu-block">
+        <div class="stat-head"><span data-i18n="gpu">GPU</span><b id="s-gpu-name">–</b></div>
+        <div class="bar"><i id="s-gpu"></i></div>
+        <div class="stat-sub"><span id="s-gpu-mem"></span><span id="s-gpu-temp"></span></div>
+      </div>
+      <div class="stat kv">
+        <div><span data-i18n="load">Load avg</span><b id="s-load">–</b></div>
+        <div><span data-i18n="net">Network</span><b id="s-net">–</b></div>
+        <div><span data-i18n="uptime">Uptime</span><b id="s-uptime">–</b></div>
+        <div><span data-i18n="host">Host</span><b id="s-host">–</b></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- ============ .ENV MODAL ============ -->
+<div id="modal" class="overlay hidden">
+  <div class="card modal-card">
+    <h2 data-i18n="modal_title">Tunnel &amp; server settings</h2>
+    <div class="field">
+      <label data-i18n="mode">Mode</label>
+      <select id="env-mode">
+        <option value="quick" data-i18n="mode_quick">Quick (random URL)</option>
+        <option value="token" data-i18n="mode_token">Named tunnel (token)</option>
+        <option value="config" data-i18n="mode_config">Config file (domain + UUID)</option>
+      </select>
+    </div>
+    <div class="field mode-token hidden">
+      <label data-i18n="f_token">Tunnel token</label>
+      <input id="env-token" type="password" placeholder="eyJhIjoi..." spellcheck="false">
+    </div>
+    <p class="muted small mode-token hidden" data-i18n="hint_token">Domain is configured in the Cloudflare Zero Trust dashboard → Public hostname → service http://localhost:PORT</p>
+    <div class="field mode-config hidden">
+      <label data-i18n="f_domain">Domain</label>
+      <input id="env-domain" type="text" placeholder="panel.example.com" spellcheck="false">
+    </div>
+    <div class="field mode-config hidden">
+      <label data-i18n="f_uuid">Tunnel UUID</label>
+      <input id="env-uuid" type="text" placeholder="00000000-0000-0000-0000-000000000000" spellcheck="false">
+    </div>
+    <div class="field mode-config hidden">
+      <label data-i18n="f_creds">Credentials JSON</label>
+      <textarea id="env-creds" rows="3" placeholder='{"AccountTag":"...","TunnelSecret":"...","TunnelID":"..."}' spellcheck="false"></textarea>
+    </div>
+    <div class="row">
+      <div class="field grow">
+        <label data-i18n="f_port">Panel port</label>
+        <input id="env-port" type="number" value="7860">
+      </div>
+      <div class="field grow">
+        <label data-i18n="f_pass">Panel password</label>
+        <input id="env-pass" type="text" placeholder="••••••" spellcheck="false">
+      </div>
+    </div>
+    <div class="row end">
+      <button class="btn btn-ghost" id="env-cancel" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-accent" id="env-save" data-i18n="save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>
