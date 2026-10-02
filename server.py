@@ -383,7 +383,7 @@ def collect_status():
     serve_on = pgrep("ollama serve")
     url = None
     try:
-        m = re.findall(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", TUNNEL_LOG.read_text(errors="ignore"))
+        m = re.findall(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com", TUNNEL_LOG.read_text(errors="ignore"))
         url = m[-1] if m else None
     except OSError:
         pass
