@@ -61,13 +61,13 @@ start() {
   echo "[tunnel] starting..."
   if [ -n "$CF_TOKEN" ]; then
     echo "[tunnel] mode: named tunnel (token). Domain is managed in Cloudflare Zero Trust dashboard."
-    nohup "$BIN" tunnel --no-autoupdate run --token "$CF_TOKEN" >"$LOG" 2>&1 &
+    nohup "$BIN" tunnel --protocol http2 --no-autoupdate run --token "$CF_TOKEN" >"$LOG" 2>&1 &
   elif [ -n "$TUNNEL_UUID" ] && [ -n "$CF_DOMAIN" ] && [ -f "$BASE/tunnel-credentials.json" ]; then
     echo "[tunnel] mode: config file, hostname $CF_DOMAIN -> http://localhost:$PORT"
-    nohup "$BIN" tunnel --no-autoupdate --config "$BASE/config.yml" run >"$LOG" 2>&1 &
+    nohup "$BIN" tunnel --protocol http2 --no-autoupdate --config "$BASE/config.yml" run >"$LOG" 2>&1 &
   else
     echo "[tunnel] mode: quick (random *.trycloudflare.com URL)"
-    nohup "$BIN" tunnel --no-autoupdate --url "http://127.0.0.1:$PORT" >"$LOG" 2>&1 &
+    nohup "$BIN" tunnel --protocol http2 --no-autoupdate --url "http://127.0.0.1:$PORT" >"$LOG" 2>&1 &
   fi
   disown
   echo "[tunnel] started (pid $!). Log: $LOG"
