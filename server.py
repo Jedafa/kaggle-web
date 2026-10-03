@@ -156,6 +156,9 @@ class Shell:
         self.clients = set()
         self.loop = None
         self.history = bytearray()
+        self.seq = 0          # total bytes ever written to history
+        self.trimmed = 0      # bytes dropped from the front of history
+        self.sid = None       # session id (changes on every respawn)
 
     def ensure(self):
         if self.pid:
@@ -164,13 +167,17 @@ class Shell:
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = "C.UTF-8"
-        env["PANEL_SESSION"] = secrets.token_hex(4)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # child
             try:
                 os.execvpe("bash", ["bash", "--rcfile", str(SCRIPTS / "bashrc"), "-i"], env)
             except Exception:
                 os._exit(1)
+        # fresh session: drop the previous session's scrollback
+        self.sid = secrets.token_hex(4)
+        self.history.clear()
+        self.seq = 0
+        self.trimmed = 0
         self.resize(120, 32)
         try:
             self.loop.add_reader(self.fd, self._on_read)
@@ -186,18 +193,31 @@ class Shell:
             self._on_exit()
             return
         self.history.extend(data)
-        if len(self.history) > 200_000:
-            del self.history[:len(self.history) - 200_000]
-        msg = json.dumps({"type": "out", "data": base64.b64encode(data).decode()})
+        self.seq += len(data)
+        if len(self.history) > 400_000:
+            drop = len(self.history) - 400_000
+            del self.history[:drop]
+            self.trimmed += drop
+        msg = json.dumps({"type": "out", "sid": self.sid, "seq": self.seq,
+                          "data": base64.b64encode(data).decode()})
         for ws in list(self.clients):
             asyncio.create_task(self._safe_send(ws, msg))
 
     async def replay(self, ws):
         """Send buffered terminal output to a newly attached client."""
         if self.history:
-            msg = json.dumps({"type": "out",
+            msg = json.dumps({"type": "out", "sid": self.sid, "seq": self.seq,
                               "data": base64.b64encode(bytes(self.history)).decode()})
             await self._safe_send(ws, msg)
+
+    def snapshot(self, offset: int, client_sid: str):
+        """Output chunk for the HTTP fallback channel."""
+        sid = self.sid or ""
+        reset = client_sid != sid
+        start = 0 if reset else max(offset, self.trimmed)
+        data = bytes(self.history[start - self.trimmed:]) if start < self.seq else b""
+        return {"sid": sid, "seq": self.seq, "reset": reset,
+                "data": base64.b64encode(data).decode()}
 
     async def _safe_send(self, ws, msg):
         try:
@@ -485,10 +505,35 @@ async def api_restart(request):
     return web.json_response({"ok": True})
 
 
+async def api_input(request):
+    data = await request.json()
+    if "cols" in data or "rows" in data:
+        try:
+            shell.resize(int(data.get("cols", 80)), int(data.get("rows", 24)))
+        except (TypeError, ValueError):
+            pass
+        return web.json_response({"ok": True})
+    chunk = str(data.get("data", ""))[:8192]
+    if chunk:
+        shell.write(chunk)
+    return web.json_response({"ok": True})
+
+
+async def api_output(request):
+    shell.ensure()  # spawn the shell on first poll too (WS may be blocked)
+    try:
+        offset = int(request.query.get("offset", "0"))
+    except ValueError:
+        offset = 0
+    client_sid = request.query.get("sid", "")
+    return web.json_response(shell.snapshot(offset, client_sid))
+
+
 async def ws_term(request):
     ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1 << 22)
     await ws.prepare(request)
     shell.loop = asyncio.get_running_loop()
+    shell.ensure()  # always have a live shell — prompt shows even after server restart
     shell.clients.add(ws)
     await shell.replay(ws)
     try:
@@ -520,6 +565,8 @@ def make_app():
     app.router.add_get("/api/env", api_env_get)
     app.router.add_post("/api/env", api_env_post)
     app.router.add_post("/api/inject", api_inject)
+    app.router.add_post("/api/input", api_input)
+    app.router.add_get("/api/output", api_output)
     app.router.add_post("/api/restart", api_restart)
     app.router.add_get("/ws/term", ws_term)
     return app

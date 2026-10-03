@@ -25,6 +25,8 @@ const I18N = {
     restart: "Restart panel", restart_note: "Port changed — restart the panel to apply",
     toast_saved: "Settings saved", toast_inject: "Sent to terminal",
     toast_saved_pass: "Settings saved — new password is active",
+    toast_fail: "Request failed — check connection",
+    offline_mode: "WebSocket unavailable — terminal output via polling",
     connected: "connected", disconnected: "disconnected",
     session_end: "Session ended — press Enter to reconnect",
     term_hint: "menu actions are typed here",
@@ -53,6 +55,8 @@ const I18N = {
     restart: "Перезапустить панель", restart_note: "Порт изменён — перезапустите панель, чтобы применить",
     toast_saved: "Настройки сохранены", toast_inject: "Отправлено в терминал",
     toast_saved_pass: "Настройки сохранены — новый пароль активен",
+    toast_fail: "Ошибка запроса — проверьте соединение",
+    offline_mode: "WebSocket недоступен — вывод терминала через polling",
     connected: "подключено", disconnected: "отключено",
     session_end: "Сессия завершена — нажмите Enter для переподключения",
     term_hint: "действия из меню печатаются здесь",
@@ -81,6 +85,8 @@ const I18N = {
     restart: "重启面板", restart_note: "端口已更改 — 请重启面板以生效",
     toast_saved: "设置已保存", toast_inject: "已发送到终端",
     toast_saved_pass: "设置已保存 — 新密码已生效",
+    toast_fail: "请求失败 — 请检查连接",
+    offline_mode: "WebSocket 不可用 — 终端输出通过轮询",
     connected: "已连接", disconnected: "已断开",
     session_end: "会话已结束 — 按 Enter 重新连接",
     term_hint: "菜单操作会在此输入",
@@ -94,6 +100,7 @@ const state = {
   lang: localStorage.getItem("panel_lang") || "en",
   theme: localStorage.getItem("panel_theme") || "dark",
   ws: null, wsUp: false, decoder: null, fit: null, term: null,
+  outSid: null, outSeq: 0,
   portBefore: null,
 };
 
@@ -190,6 +197,40 @@ $("#logout").addEventListener("click", () => {
 });
 
 /* ---------------- terminal ---------------- */
+function decodeB64(b64) {
+  return state.decoder.decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), { stream: true });
+}
+/* apply one output chunk (from WS or poll) with session + ordering dedup */
+function applyOut(d) {
+  if (!state.term || typeof d.seq !== "number") return;
+  if (d.sid !== state.outSid) {           /* new shell session on the server */
+    state.term.reset();
+    state.decoder = new TextDecoder("utf-8");
+    state.outSid = d.sid;
+    state.outSeq = 0;
+    if (!d.data) return;
+  }
+  if (d.seq <= state.outSeq) return;      /* already shown */
+  if (d.data) state.term.write(decodeB64(d.data));
+  state.outSeq = d.seq;
+}
+async function pollOutput() {
+  if (!state.term) return;
+  try {
+    const r = await fetch(`/api/output?offset=${state.outSeq}&sid=${encodeURIComponent(state.outSid || "")}`,
+      { headers: { "X-Auth": state.token } });
+    if (r.status === 401) { showLogin(); return; }
+    applyOut(await r.json());
+  } catch {}
+}
+function sendResize() {
+  if (!state.term) return;
+  if (state.ws && state.wsUp) {
+    state.ws.send(JSON.stringify({ type: "resize", cols: state.term.cols, rows: state.term.rows }));
+  } else {
+    apiPost("/api/input", { cols: state.term.cols, rows: state.term.rows }).catch(() => {});
+  }
+}
 function initTerminal() {
   if (state.term) { setTimeout(() => state.fit && state.fit.fit(), 60); return; }
   state.decoder = new TextDecoder("utf-8");
@@ -198,18 +239,20 @@ function initTerminal() {
     fontSize: 14, cursorBlink: true, scrollback: 5000,
     theme: { background: "transparent", foreground: "#d8dee9", cursor: "#6c5ce7" },
   });
+  window.__term = state.term; /* debug/testing hook */
   state.fit = new FitAddon.FitAddon();
   state.term.loadAddon(state.fit);
   state.term.open($("#terminal"));
   applyTheme();
   state.term.onData((data) => {
     if (state.ws && state.wsUp) state.ws.send(JSON.stringify({ type: "input", data }));
+    else apiPost("/api/input", { data }).catch(() => {});
   });
   new ResizeObserver(() => {
     if (!state.fit) return;
     try {
       state.fit.fit();
-      state.ws && state.wsUp && state.ws.send(JSON.stringify({ type: "resize", cols: state.term.cols, rows: state.term.rows }));
+      sendResize();
     } catch {}
   }).observe($("#terminal"));
   connectWS();
@@ -226,12 +269,12 @@ function connectWS() {
       state.welcomed = true;
       state.term.write(`\x1b[1;35m⚡ ${t("title")}\x1b[0m \x1b[90m— ${t("term_hint")}\x1b[0m\r\n\r\n`);
     }
-    ws.send(JSON.stringify({ type: "resize", cols: state.term.cols, rows: state.term.rows }));
+    sendResize();
   };
   ws.onmessage = (ev) => {
     let d;
     try { d = JSON.parse(ev.data); } catch { return; }
-    if (d.type === "out") state.term.write(state.decoder.decode(Uint8Array.from(atob(d.data), (c) => c.charCodeAt(0)), { stream: true }));
+    if (d.type === "out") applyOut(d);
     else if (d.type === "exit") state.term.write(`\r\n\x1b[1;33m${t("session_end")}\x1b[0m\r\n`);
   };
   ws.onclose = () => {
@@ -266,7 +309,10 @@ async function inject(cmd) {
   try {
     await apiPost("/api/inject", { cmd });
     toast(t("toast_inject"));
-  } catch {}
+    if (!state.wsUp) toast("⚠ " + t("offline_mode"));
+  } catch {
+    toast("⚠ " + t("toast_fail"));
+  }
 }
 
 $("#btn-ollama").addEventListener("click", () => inject(CMD.installOllama));
@@ -447,5 +493,6 @@ applyTheme();
 tryVerify();
 setInterval(pollStats, 2000);
 setInterval(pollStatus, 4000);
+setInterval(pollOutput, 1000);   /* safety net + terminal fallback channel */
 pollStats();
 pollStatus();
