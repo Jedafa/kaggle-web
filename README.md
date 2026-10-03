@@ -38,6 +38,20 @@ server stats, Ollama + zstd installer, Cloudflare tunnel manager and model insta
 | Token | токен из Cloudflare Zero Trust → Networks → Tunnels; публичный hostname настраивается в дашборде → service `http://localhost:PORT` |
 | Config | Tunnel UUID + домен + JSON учётных данных (файл `config.yml` создаётся автоматически) |
 
+## Доступ к моделям онлайн (Ollama API)
+
+Отдельный поддомен **не нужен**. Панель проксирует Ollama прямо через себя:
+когда запущены туннель и `ollama serve`, в левой колонке появляется плашка
+`<адрес-панели>/ollama` — это адрес твоего Ollama API, доступный из любой точки мира.
+
+- **Нативный API Ollama:** `https://<домен-панели>/ollama/api/generate`, `/api/chat`, `/api/tags`…
+- **OpenAI-совместимый:** `https://<домен-панели>/ollama/v1/chat/completions`
+  (base_url в приложениях: `https://<домен-панели>/ollama/v1`).
+- **Ключ API = пароль панели** (`Authorization: Bearer <пароль панели>`).
+- Работает и через quick-туннель, и со своим доменом — в Cloudflare ничего добавлять не надо.
+- Если хочется отдать Ollama отдельным поддоменом напрямую — добавь в том же туннеле
+  второй Public hostname → `http://localhost:11434`, но учти: тогда API будет открыт **без пароля**.
+
 ## Безопасность
 
 - Панель слушает только `127.0.0.1` — снаружи доступна **только через туннель**.

@@ -30,6 +30,7 @@ const I18N = {
     connected: "connected", disconnected: "disconnected",
     session_end: "Session ended — press Enter to reconnect",
     term_hint: "menu actions are typed here",
+    ollama_api_hint: "Ollama API — the key is the panel password (Authorization: Bearer <password>)",
     no_gpu: "not detected", none: "—",
   },
   ru: {
@@ -60,6 +61,7 @@ const I18N = {
     connected: "подключено", disconnected: "отключено",
     session_end: "Сессия завершена — нажмите Enter для переподключения",
     term_hint: "действия из меню печатаются здесь",
+    ollama_api_hint: "Ollama API — ключ = пароль панели (Authorization: Bearer <пароль>)",
     no_gpu: "не обнаружен", none: "—",
   },
   zh: {
@@ -90,6 +92,7 @@ const I18N = {
     connected: "已连接", disconnected: "已断开",
     session_end: "会话已结束 — 按 Enter 重新连接",
     term_hint: "菜单操作会在此输入",
+    ollama_api_hint: "Ollama API — 密钥即面板密码（Authorization: Bearer <密码>）",
     no_gpu: "未检测到", none: "—",
   },
 };
@@ -403,6 +406,10 @@ $("#tunnel-copy").addEventListener("click", () => {
   const url = $("#tunnel-url").textContent;
   if (url && navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast(t("copied")));
 });
+$("#ollama-copy").addEventListener("click", () => {
+  const url = $("#ollama-url").textContent;
+  if (url && navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast(t("copied")));
+});
 
 /* ---------------- polling: stats + status ---------------- */
 function fmtBytes(n) {
@@ -450,6 +457,7 @@ function renderStatus(d) {
   $("#dot-ollama").className = "dot" + (d.ollama_installed ? " on" : "");
   $("#dot-tunnel").className = "dot" + (d.tunnel_running ? " on" : "");
   const chip = $("#tunnel-chip");
+  const ochip = $("#ollama-chip");
   if (d.tunnel_url) {
     chip.classList.remove("hidden");
     $("#tunnel-url").textContent = d.tunnel_url;
@@ -460,6 +468,13 @@ function renderStatus(d) {
     $("#tunnel-url").removeAttribute("href");
   } else {
     chip.classList.add("hidden");
+  }
+  if (d.tunnel_running && d.ollama_serve) {
+    ochip.classList.remove("hidden");
+    $("#ollama-url").textContent = location.origin + "/ollama";
+    $("#ollama-url").title = t("ollama_api_hint");
+  } else {
+    ochip.classList.add("hidden");
   }
   const box = $("#models-box");
   if (!box.classList.contains("hidden")) {

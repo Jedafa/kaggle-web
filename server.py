@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
+import aiohttp
 import psutil
 
 HOME = Path.home()
@@ -269,13 +270,21 @@ def auth_ok(request) -> bool:
         or request.headers.get("X-Auth")
         or request.query.get("auth")
     )
+    if not tok:
+        # OpenAI-compatible clients send the key as a bearer token
+        authz = request.headers.get("Authorization", "")
+        if authz.startswith("Bearer "):
+            tok = authz[7:].strip()
     return bool(tok) and secrets.compare_digest(str(tok), AUTH_TOKEN)
 
 
 @web.middleware
 async def auth_middleware(request, handler):
     public = request.path == "/api/login"
-    if (request.path.startswith("/api/") or request.path.startswith("/ws")) and not public:
+    guarded = (request.path.startswith("/api/")
+               or request.path.startswith("/ws")
+               or request.path.startswith("/ollama"))
+    if guarded and not public:
         if not auth_ok(request):
             return web.json_response({"error": "unauthorized"}, status=401)
     resp = await handler(request)
@@ -553,6 +562,38 @@ async def ws_term(request):
     return ws
 
 
+# ---------------------------------------------------------------- ollama proxy
+http_client = None
+
+
+async def ollama_proxy(request):
+    """Reverse-proxy /ollama/* -> 127.0.0.1:11434/* so one domain serves both
+    the panel and the Ollama API (password-protected, streaming-safe)."""
+    tail = request.match_info.get("path", "")
+    url = "http://127.0.0.1:11434/" + tail
+    if request.query_string:
+        url += "?" + request.query_string
+    body = await request.read() if request.can_read_body else None
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() in ("content-type", "accept", "authorization")}
+    try:
+        async with http_client.request(request.method, url, data=body,
+                                       headers=headers) as up:
+            resp = web.StreamResponse(
+                status=up.status,
+                headers={"Content-Type": up.headers.get("Content-Type",
+                                                        "application/octet-stream")})
+            await resp.prepare(request)
+            async for chunk in up.content.iter_any():
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+    except (OSError, asyncio.TimeoutError):
+        return web.json_response(
+            {"error": "ollama is not running — start it in the panel"},
+            status=502)
+
+
 def make_app():
     app = web.Application(middlewares=[auth_middleware],
                           client_max_size=2 * 1024 * 1024)
@@ -569,6 +610,7 @@ def make_app():
     app.router.add_get("/api/output", api_output)
     app.router.add_post("/api/restart", api_restart)
     app.router.add_get("/ws/term", ws_term)
+    app.router.add_route("*", "/ollama/{path:.*}", ollama_proxy)
     return app
 
 
@@ -580,7 +622,10 @@ def main():
     AUTH_TOKEN = os.environ.get("PANEL_PASSWORD") or secrets.token_urlsafe(9)
 
     async def _on_start(app):
+        global http_client
         shell.loop = asyncio.get_running_loop()
+        http_client = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None))
 
     print("=" * 58)
     print("  ⚡ Kaggle Web Panel")
