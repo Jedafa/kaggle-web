@@ -574,15 +574,20 @@ async def ollama_proxy(request):
     if request.query_string:
         url += "?" + request.query_string
     body = await request.read() if request.can_read_body else None
-    headers = {k: v for k, v in request.headers.items()
+    headers = {k.lower(): v for k, v in request.headers.items()
                if k.lower() in ("content-type", "accept", "authorization")}
+    # force plain streaming: if Ollama gzips the response, its Go server
+    # buffers SSE chunks and the client sees nothing until the very end
+    headers["accept-encoding"] = "identity"
     try:
         async with http_client.request(request.method, url, data=body,
                                        headers=headers) as up:
             resp = web.StreamResponse(
                 status=up.status,
                 headers={"Content-Type": up.headers.get("Content-Type",
-                                                        "application/octet-stream")})
+                                                        "application/octet-stream"),
+                         "Cache-Control": "no-cache",
+                         "X-Accel-Buffering": "no"})
             await resp.prepare(request)
             async for chunk in up.content.iter_any():
                 await resp.write(chunk)
