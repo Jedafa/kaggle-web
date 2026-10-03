@@ -611,6 +611,7 @@ def make_app():
     app.router.add_post("/api/restart", api_restart)
     app.router.add_get("/ws/term", ws_term)
     app.router.add_route("*", "/ollama/{path:.*}", ollama_proxy)
+    app.router.add_route("*", "/ollama", ollama_proxy)
     return app
 
 
